@@ -21,6 +21,7 @@ using Mouse_Ghst_wpf.Enums;
 using MouseAction = Mouse_Ghst_wpf.Classes.MouseAction;
 using System.Windows.Threading;
 using Point = System.Windows.Point;
+using System.Drawing;
 
 namespace Mouse_Ghst_wpf
 {
@@ -34,6 +35,7 @@ namespace Mouse_Ghst_wpf
         private const int INPUT_BUTTON = 2;
 
         private bool isReplaying = false;
+        private bool shouldRecordMouse = false;
 
         private List<BaseAction> allActions = new List<BaseAction>();
         private List<InputAction> recordedActions = new List<InputAction>();
@@ -86,6 +88,10 @@ namespace Mouse_Ghst_wpf
         [DllImport("User32.dll")]
         private static extern bool SetCursorPos(int X, int Y);
 
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetCursorPos(out Point lpPoint);
+
 
         private LowLevelKeyboardProc keyboardProc;
         private LowLevelMouseProc mouseProc;
@@ -120,7 +126,7 @@ namespace Mouse_Ghst_wpf
             {
                 int vkCode = Marshal.ReadInt32(lParam);
                 InputAction action = new InputAction(ActionType.Keyboard, vkCode, (wParam == (IntPtr)WM_KEYDOWN), DateTime.Now - startTime);
-                recordedActions.Add(action);
+               
                 allActions.Add(action);
             }
             return CallNextHookEx(keyboardHookHandle, nCode, wParam, lParam);
@@ -128,14 +134,20 @@ namespace Mouse_Ghst_wpf
 
         private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
-            if (nCode >= 0 && (wParam == (IntPtr)WM_LBUTTONDOWN || wParam == (IntPtr)WM_LBUTTONUP || wParam == (IntPtr)WM_MOUSEWHEEL))
+            if (nCode >= 0)
             {
                 HookStruct hookStruct = (HookStruct)Marshal.PtrToStructure(lParam, typeof(HookStruct));
 
                 // Record mouse events
                 MouseAction action = new MouseAction(wParam, hookStruct.pt.x, hookStruct.pt.y, DateTime.Now - startTime);
-                recordedMouseActions.Add(action);
-                allActions.Add(action);
+
+                if(StopButton.IsEnabled && 
+                    (!(action.MouseType == MouseActionType.Move || action.MouseType == MouseActionType.Move2)
+                    || shouldRecordMouse))
+                {
+                    allActions.Add(action);
+                    shouldRecordMouse = false;
+                }
             }
             return CallNextHookEx(mouseHookHandle, nCode, wParam, lParam);
         }
@@ -168,25 +180,18 @@ namespace Mouse_Ghst_wpf
         private void RecordMouseTimer_Tick(object sender, EventArgs e)
         {
             // Record mouse events
-            Point mousePosition = Mouse.GetPosition(this);
-            var action = new MouseAction((IntPtr)MouseActionType.Move, (int)mousePosition.X, (int)mousePosition.Y, DateTime.Now - startTime);
-            recordedMouseActions.Add(action);
-            allActions.Add(action);
+            shouldRecordMouse = true;
         }
 
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
             // Stop recording
             PreviewKeyDown -= RecordKeyDown;
-            recordMouseTimer.Start();
+            recordMouseTimer.Stop();
+            recordMouseTimer.Tick -= RecordMouseTimer_Tick;
+            shouldRecordMouse = false;
 
-            /*if (allActions.Count > 0)
-            {
-                allActions.RemoveAt(allActions.Count - 1);
-                allActions.RemoveAt(allActions.Count - 1);
-                recordedMouseActions.RemoveAt(recordedMouseActions.Count - 1);
-                recordedMouseActions.RemoveAt(recordedMouseActions.Count - 1);
-            }*/
+            // TODO : Erase last click that wasn't to stop the recording
 
             foreach (var action in allActions)
             {
@@ -194,7 +199,10 @@ namespace Mouse_Ghst_wpf
                 var mouseAction = action as MouseAction;
 
                 if (mouseAction != null)
-                    Console.WriteLine($"Mouse Action: {mouseAction.MouseType}, X: {mouseAction.X}, Y: {mouseAction.Y}, Time: {mouseAction.Time}");
+                {
+                    string mouseActionString = (int)mouseAction.UnknownMouseType == 0 ? mouseAction.MouseType.ToString() : mouseAction.UnknownMouseType.ToString();
+                    Console.WriteLine($"Mouse Action: {mouseActionString}, X: {mouseAction.X}, Y: {mouseAction.Y}, Time: {mouseAction.Time}");
+                }
                 else if (keyAction != null)
                     Console.WriteLine($"Key: {keyAction.KeyCode}, Time: {keyAction.Time}");
                 else
@@ -207,6 +215,7 @@ namespace Mouse_Ghst_wpf
 
             Console.WriteLine($"Stopped to Record");
         }
+
         private async Task ReplayActionsAsync(int replaySpeedMilliseconds)
         {
             var actionsCopy = allActions.ToArray();
@@ -243,15 +252,15 @@ namespace Mouse_Ghst_wpf
 
                             if (true || mouseAction.MouseType != MouseActionType.Move)
                             {
-                                await Task.Delay(2);
+                                // await Task.Delay(1);
                                 mouse_event((int)mouseAction.MouseType, mouseAction.X, mouseAction.Y, 0, 0);
-                                await Task.Delay(2);
+                                //await Task.Delay(1);
                             }
-                            Console.WriteLine("Mouse moved : " + mouseAction.MouseType.ToString());
+                            Console.WriteLine($"Mouse moved : {mouseAction.MouseType.ToString()}, ({mouseAction.X}, {mouseAction.Y}), delay: {delay.TotalMilliseconds/1000}");
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine(ex.ToString());
+                            Console.WriteLine("Mouse Move exception : " + ex.ToString());
                         }
                     }
                     else if (action.Type == ActionType.Keyboard)
@@ -264,9 +273,9 @@ namespace Mouse_Ghst_wpf
                         inputs[0].u.ki.wVk = (ushort)keyboardAction.KeyCode;
                         inputs[0].u.ki.dwFlags = (uint)((keyboardAction.KeyDown) ? 0 : 2); // 0 for keydown, 2 for key
 
-                        await Task.Delay(10);
+                        //await Task.Delay(10);
                         SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
-                        await Task.Delay(10);
+                        //await Task.Delay(10);
                         Console.WriteLine("Key Pressed");
                     }
 
@@ -321,13 +330,13 @@ namespace Mouse_Ghst_wpf
                     if (keyboardAction.KeyDown)
                     {
                         KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(keyboardAction.KeyCode));
-                        keyEventArgs.RoutedEvent = UIElement.KeyDownEvent;
+                        keyEventArgs.RoutedEvent = KeyDownEvent;
                         InputManager.Current.ProcessInput(keyEventArgs);
                     }
                     else
                     {
                         KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(keyboardAction.KeyCode));
-                        keyEventArgs.RoutedEvent = UIElement.KeyUpEvent;
+                        keyEventArgs.RoutedEvent = KeyUpEvent;
                         InputManager.Current.ProcessInput(keyEventArgs);
                     }
                 }

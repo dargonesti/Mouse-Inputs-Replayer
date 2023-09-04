@@ -7,9 +7,10 @@ using System.Threading.Tasks;
 
 namespace Mouse_Ghst_wpf.Classes
 {
-    public class MouseAction :BaseAction
+    public class MouseAction : BaseAction
     {
         public MouseActionType MouseType { get; set; }
+        public IntPtr UnknownMouseType { get; set; }
         public int X { get; set; }
         public int Y { get; set; }
 
@@ -20,25 +21,17 @@ namespace Mouse_Ghst_wpf.Classes
         private const int WM_MOUSEWHEEL = 0x020A;
         private const int WM_MOUSEMOVE = 0x00000001;
 
-
         public MouseAction(IntPtr wParam, int x, int y, TimeSpan time)
         {
-            if (wParam == (IntPtr)WM_MOUSEMOVE)
+
+            if (Enum.IsDefined(typeof(MouseActionType), (int)wParam))
             {
-                MouseType = MouseActionType.Move;
+                MouseType = (MouseActionType)(int)wParam;
             }
-            else if (wParam == (IntPtr)WM_LBUTTONDOWN)
+            else
             {
-                MouseType = MouseActionType.Down;
-            }
-            else if (wParam == (IntPtr)WM_LBUTTONUP)
-            {
-                MouseType = MouseActionType.Up;
-            }
-            else if (wParam == (IntPtr)WM_MOUSEWHEEL)
-            {
-                //MouseType = MouseActionType.Wheel;
-                Console.WriteLine("TODO : Mouse Wheel");
+                // Unknown MouseActionType
+                UnknownMouseType = wParam;
             }
 
             X = x;
