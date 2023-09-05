@@ -22,6 +22,7 @@ using MouseAction = Mouse_Ghst_wpf.Classes.MouseAction;
 using System.Windows.Threading;
 using Point = System.Windows.Point;
 using System.Drawing;
+using Mouse_Ghst_wpf.Struct;
 
 namespace Mouse_Ghst_wpf
 {
@@ -79,7 +80,8 @@ namespace Mouse_Ghst_wpf
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
         [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
+        private static extern uint SendInput(uint nInputs, Input[] pInputs, int cbSize);
+
 
         [DllImport("user32.dll")]
         private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
@@ -163,7 +165,7 @@ namespace Mouse_Ghst_wpf
 
             // Initialize the recordMouseTimer
             recordMouseTimer = new DispatcherTimer();
-            recordMouseTimer.Interval = TimeSpan.FromMilliseconds(10); // Capture mouse position every 10 milliseconds
+            recordMouseTimer.Interval = TimeSpan.FromMilliseconds(10); // Capture mouse position every X milliseconds
             recordMouseTimer.Tick += RecordMouseTimer_Tick;
             recordMouseTimer.Start();
 
@@ -238,12 +240,13 @@ namespace Mouse_Ghst_wpf
                     {
                         // Replay mouse actions
                         var mouseAction = (MouseAction)action;
-                        INPUT[] inputs = new INPUT[2];
-                        inputs[0] = new INPUT();
+                        Input[] inputs = new Input[1];
+                        inputs[0] = new Input();
                         inputs[0].type = INPUT_MOUSE;
-                        inputs[0].u.mi.dx = (int)(mouseAction.X * 65536 / System.Windows.SystemParameters.PrimaryScreenWidth);
-                        inputs[0].u.mi.dy = (int)(mouseAction.Y * 65536 / System.Windows.SystemParameters.PrimaryScreenHeight);
+                        inputs[0].u.mi.dx = (int)(mouseAction.X * 65536 / SystemParameters.PrimaryScreenWidth);
+                        inputs[0].u.mi.dy = (int)(mouseAction.Y * 65536 / SystemParameters.PrimaryScreenHeight);
                         inputs[0].u.mi.dwFlags = (uint)mouseAction.MouseType;
+                        inputs[0].u.mi.mouseData = 0;
                         //(mouseAction.MouseType == MouseActionType.MouseDown) ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
 
                         try
@@ -253,7 +256,8 @@ namespace Mouse_Ghst_wpf
                             if (true || mouseAction.MouseType != MouseActionType.Move)
                             {
                                 // await Task.Delay(1);
-                                mouse_event((int)mouseAction.MouseType, mouseAction.X, mouseAction.Y, 0, 0);
+                                //mouse_event((int)mouseAction.MouseType, mouseAction.X, mouseAction.Y, 0, 0);
+                                SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
                                 //await Task.Delay(1);
                             }
                             Console.WriteLine($"Mouse moved : {mouseAction.MouseType.ToString()}, ({mouseAction.X}, {mouseAction.Y}), delay: {delay.TotalMilliseconds/1000}");
@@ -267,14 +271,14 @@ namespace Mouse_Ghst_wpf
                     {
                         // Replay keyboard actions
                         var keyboardAction = (InputAction)action;
-                        INPUT[] inputs = new INPUT[1];
-                        inputs[0] = new INPUT();
+                        Input[] inputs = new Input[1];
+                        inputs[0] = new Input();
                         inputs[0].type = INPUT_KEYBOARD;
                         inputs[0].u.ki.wVk = (ushort)keyboardAction.KeyCode;
                         inputs[0].u.ki.dwFlags = (uint)((keyboardAction.KeyDown) ? 0 : 2); // 0 for keydown, 2 for key
 
                         //await Task.Delay(10);
-                        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+                        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
                         //await Task.Delay(10);
                         Console.WriteLine("Key Pressed");
                     }
@@ -355,23 +359,6 @@ namespace Mouse_Ghst_wpf
         {
             isReplaying = true;
             ReplayActionsAsync(333);
-            // Replay recorded keyboard actions
-            /* foreach (var action in recordedActions)
-             {
-                 // Simulate key press
-                 if (action.KeyDown)
-                 {
-                     KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(action.KeyCode));
-                     keyEventArgs.RoutedEvent = UIElement.KeyDownEvent;
-                     InputManager.Current.ProcessInput(keyEventArgs);
-                 }
-                 else
-                 {
-                     KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(action.KeyCode));
-                     keyEventArgs.RoutedEvent = UIElement.KeyUpEvent;
-                     InputManager.Current.ProcessInput(keyEventArgs);
-                 }
-             }//*/
         }
 
         private void RecordKeyDown(object sender, KeyEventArgs e)
@@ -385,80 +372,6 @@ namespace Mouse_Ghst_wpf
         {
             base.OnClosing(e);
             UnhookWindowsHookEx(keyboardHookHandle);
-        }
-
-
-
-
-
-
-
-
-
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct INPUT
-        {
-            public int type;
-            public InputUnion u;
-            public uint dwFlags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        [StructLayout(LayoutKind.Explicit)]
-        private struct InputUnion
-        {
-            [FieldOffset(0)]
-            public MOUSEINPUT mi;
-
-            [FieldOffset(0)]
-            public KEYBDINPUT ki;
-
-            [FieldOffset(0)]
-            public HARDWAREINPUT hi;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct MOUSEINPUT
-        {
-            public int dx;
-            public int dy;
-            public uint mouseData;
-            public uint dwFlags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct KEYBDINPUT
-        {
-            public ushort wVk;
-            public ushort wScan;
-            public uint dwFlags;
-            public uint time;
-            public IntPtr dwExtraInfo;
-        }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct HARDWAREINPUT
-        {
-            public uint uMsg;
-            public ushort wParamL;
-            public ushort wParamH;
-        }
-
-        [Flags]
-        public enum MouseEventFlags
-        {
-            Move = 0x00000001,
-            LeftDown = 0x00000002,
-            LeftUp = 0x00000004,
-            MiddleDown = 0x00000020,
-            MiddleUp = 0x00000040,
-            Absolute = 0x00008000,
-            RightDown = 0x00000008,
-            RightUp = 0x00000010
         }
 
     }

@@ -56,6 +56,12 @@
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
     </ApplicationDefinition>
+    <Compile Include="Enums\MouseEventFlags.cs" />
+    <Compile Include="Struct\HARDWAREINPUT.cs" />
+    <Compile Include="Struct\Input.cs" />
+    <Compile Include="Struct\InputUnion.cs" />
+    <Compile Include="Struct\KEYBDINPUT.cs" />
+    <Compile Include="Struct\MOUSEINPUT.cs" />
     <Page Include="Pages\MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>
