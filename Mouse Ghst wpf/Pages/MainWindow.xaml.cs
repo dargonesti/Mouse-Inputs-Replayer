@@ -1,30 +1,17 @@
-﻿using System;
+﻿using Mouse_Ghst_wpf.Classes;
+using Mouse_Ghst_wpf.Enums;
+using Mouse_Ghst_wpf.Struct;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
-using System.Text;
+using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Documents;
-using System.Windows.Input;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Navigation;
-using System.Windows.Shapes;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
-using System.ComponentModel;
-using Mouse_Ghst_wpf.Classes;
-using static System.Collections.Specialized.BitVector32;
-using Mouse_Ghst_wpf.Enums;
-using MouseAction = Mouse_Ghst_wpf.Classes.MouseAction;
 using System.Windows.Threading;
+using MouseAction = Mouse_Ghst_wpf.Classes.MouseAction;
 using Point = System.Windows.Point;
-using System.Drawing;
-using Mouse_Ghst_wpf.Struct;
-using System.Reflection.Emit;
-using System.Threading;
 
 namespace Mouse_Ghst_wpf
 {
@@ -138,7 +125,7 @@ namespace Mouse_Ghst_wpf
             if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_KEYUP))
             {
                 InputAction action = new InputAction(ActionType.Keyboard, vkCode, (wParam == (IntPtr)WM_KEYDOWN), DateTime.Now - startTime);
-               
+
                 allActions.Add(action);
 
 
@@ -162,7 +149,7 @@ namespace Mouse_Ghst_wpf
                 // Record mouse events
                 MouseAction action = new MouseAction(wParam, hookStruct.pt.x, hookStruct.pt.y, DateTime.Now - startTime);
 
-                if(StopButton.IsEnabled && 
+                if (StopButton.IsEnabled &&
                     (!(action.MouseType == MouseActionType.Move || action.MouseType == MouseActionType.Move2)
                     || shouldRecordMouse))
                 {
@@ -254,7 +241,7 @@ namespace Mouse_Ghst_wpf
 
             var actionsCopy = allActions.ToArray();
             var firstAction = actionsCopy.First();
-            
+
             GC.Collect();
 
             try
@@ -270,7 +257,7 @@ namespace Mouse_Ghst_wpf
                     {
                         if (!isReplaying || _interruptReplay)
                         {
-                            break; // Stop replaying if the user clicked the "Stop" button
+                            break; // Stop replaying if the user clicked the "Stop" or "Esc" button
                         }
 
                         var actualDelay = (action.Time - firstAction.Time) - (DateTime.Now - replayStart);
@@ -389,13 +376,13 @@ namespace Mouse_Ghst_wpf
 
         private void Unhook(bool keyboard = false, bool mouse = true)
         {
-            if(keyboardHookHandle != null && keyboard)
+            if (keyboardHookHandle != null && keyboard)
             {
                 Console.WriteLine("Unhook Keyboard");
                 UnhookWindowsHookEx(keyboardHookHandle.Value);
                 keyboardHookHandle = null;
             }
-            if(mouseHookHandle != null && mouse)
+            if (mouseHookHandle != null && mouse)
             {
                 Console.WriteLine("Unhook Mouse");
                 UnhookWindowsHookEx(mouseHookHandle.Value);
