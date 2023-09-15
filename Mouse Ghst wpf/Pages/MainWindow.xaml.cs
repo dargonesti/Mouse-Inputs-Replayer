@@ -172,13 +172,12 @@ namespace Mouse_Ghst_wpf
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
             // Stop recording
-            //PreviewKeyDown -= RecordKeyDown;
             Unhook();
             recordMouseTimer.Stop();
             recordMouseTimer.Tick -= RecordMouseTimer_Tick;
             shouldRecordMouse = false;
 
-            // TODO : Make a recording editor that shows the inputs and edits them
+            // TODO : Make a recording editor that shows the inputs and edits themshows
 
             //UI
             RecordButton.IsEnabled = true;

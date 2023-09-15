@@ -10,6 +10,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows;
 using Mouse_Ghst_wpf.Struct;
 using Point = System.Windows.Point;
+using System.Data;
 
 namespace Mouse_Ghst_wpf.Classes
 {
@@ -24,6 +25,9 @@ namespace Mouse_Ghst_wpf.Classes
         private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
         private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
         private const uint MOUSEEVENTF_LEFTUP = 0x0004;
+        private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+        private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+        private const uint MOUSEEVENTF_WHEEL = 0x0800;
         private const uint MOUSEEVENTF_MOVE = 0x0001;
         private const int INPUT_MOUSE = 0;
         private const int INPUT_KEYBOARD = 1;
@@ -40,6 +44,7 @@ namespace Mouse_Ghst_wpf.Classes
 
             Console.WriteLine($"Replaying actions, {loops} times.");
 
+            uint lastLog = 0;
             for (int i = 0; i < loops; i++)
             {
                 Console.WriteLine($"Replaying actions, loop #{i}.");
@@ -67,6 +72,8 @@ namespace Mouse_Ghst_wpf.Classes
                     {
                         // Replay mouse actions
                         var mouseAction = (MouseAction)action;
+                        uint wheelMovement = 0;
+
                         if (mouseAction.MouseType == MouseActionType.Down || mouseAction.MouseType == MouseActionType.Down2)
                         {
                             _isDragging = true;
@@ -89,6 +96,24 @@ namespace Mouse_Ghst_wpf.Classes
                             case MouseActionType.Up2:
                                 mouseEventFlag = MOUSEEVENTF_LEFTUP;
                                 break;
+                            case MouseActionType.RightDown:
+                            case MouseActionType.RightDown2:
+                                mouseEventFlag = MOUSEEVENTF_RIGHTDOWN;
+                                break;
+                            case MouseActionType.RightUp:
+                            case MouseActionType.RightUp2:
+                                mouseEventFlag = MOUSEEVENTF_RIGHTUP;
+                                break;
+                            case MouseActionType.MiddleDown:
+                            case MouseActionType.MiddleDown2:
+                                mouseEventFlag = MOUSEEVENTF_WHEEL;
+                                wheelMovement = 120;
+                                break;
+                            case MouseActionType.MiddleUp:
+                                mouseEventFlag = MOUSEEVENTF_WHEEL;
+                                wheelMovement = 120;
+                                break;
+
                                 // Add other cases as necessary
                         }
                         try
@@ -96,10 +121,15 @@ namespace Mouse_Ghst_wpf.Classes
                             if (true || mouseAction.MouseType != MouseActionType.Move)
                             {
                                 // Use mouse_event function to simulate the action
-                                mouse_event(mouseEventFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | (_isDragging ? MOUSEEVENTF_LEFTDOWN : 0),
+                                var mouseVal = (mouseEventFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | (_isDragging ? MOUSEEVENTF_LEFTDOWN : 0));
+                                if (mouseVal != lastLog)
+                                    Console.WriteLine($"0x{mouseVal:X4}" + "   " + $"0x{mouseVal:X8}");
+                                lastLog = mouseVal;
+
+                                mouse_event(mouseVal,
                                             (uint)(mouseAction.X * 65536 / SystemParameters.PrimaryScreenWidth),
                                             (uint)(mouseAction.Y * 65536 / SystemParameters.PrimaryScreenHeight),
-                                            0, 0);
+                                            wheelMovement, 0);
                             }
                         }
                         catch (Exception ex)
