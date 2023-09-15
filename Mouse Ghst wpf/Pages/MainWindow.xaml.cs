@@ -6,9 +6,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Threading;
 using MouseAction = Mouse_Ghst_wpf.Classes.MouseAction;
 using Point = System.Windows.Point;
@@ -23,17 +25,13 @@ namespace Mouse_Ghst_wpf
         private const int MOVE_TIMER = 1;
         private bool _isDragging = false;
 
+        private ActionReplayer actionReplayer;
+
         private const int INPUT_MOUSE = 0;
         private const int INPUT_KEYBOARD = 1;
         private const int INPUT_BUTTON = 2;
 
-        private bool isReplaying = false;
         private bool shouldRecordMouse = false;
-        private bool _interruptReplay = false;
-
-        private List<BaseAction> allActions = new List<BaseAction>();
-        private List<InputAction> recordedActions = new List<InputAction>();
-        private List<MouseAction> recordedMouseActions = new List<MouseAction>();
 
         private DateTime startTime;
         private IntPtr? keyboardHookHandle;
@@ -72,35 +70,20 @@ namespace Mouse_Ghst_wpf
         [DllImport("user32.dll", CharSet = CharSet.Auto, SetLastError = true)]
         private static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
 
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern uint SendInput(uint nInputs, Input[] pInputs, int cbSize);
-
-
-        [DllImport("user32.dll")]
-        private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
-
-        [DllImport("user32.dll")]
-        public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);
-
-
-        [DllImport("User32.dll")]
-        private static extern bool SetCursorPos(int X, int Y);
-
-        [DllImport("user32.dll")]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        private static extern bool GetCursorPos(out Point lpPoint);
-
 
         private LowLevelKeyboardProc keyboardProc;
         private LowLevelMouseProc mouseProc;
 
         public MainWindow()
         {
+            actionReplayer = new ActionReplayer();
             InitializeComponent();
             startTime = DateTime.Now;
+            ReplayAmountTextBox.PreviewTextInput += PreviewTextInputHandler;
+            ReplayAmount = 1;
         }
 
-        private IntPtr SetHook()
+        private IntPtr SetKeyboardHook()
         {
             Console.WriteLine("Set KB Hook");
             keyboardProc = KeyboardHookCallback;
@@ -122,19 +105,17 @@ namespace Mouse_Ghst_wpf
         {
             int vkCode = Marshal.ReadInt32(lParam);
 
-            if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_KEYUP))
+            if (RecordButton.IsEnabled == false  && nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_KEYUP))
             {
                 InputAction action = new InputAction(ActionType.Keyboard, vkCode, (wParam == (IntPtr)WM_KEYDOWN), DateTime.Now - startTime);
 
-                allActions.Add(action);
-
-
+                actionReplayer.allActions.Add(action);
             }
 
             if (vkCode == 27)
             {
                 //Escape pressed, interrupt replay
-                _interruptReplay = true;
+                actionReplayer._interruptReplay = true;
             }
             Console.WriteLine($"Key : {vkCode}");
             return CallNextHookEx(keyboardHookHandle.Value, nCode, wParam, lParam);
@@ -153,20 +134,17 @@ namespace Mouse_Ghst_wpf
                     (!(action.MouseType == MouseActionType.Move || action.MouseType == MouseActionType.Move2)
                     || shouldRecordMouse))
                 {
-                    allActions.Add(action);
+                    actionReplayer.allActions.Add(action);
                     shouldRecordMouse = false;
                 }
             }
-            Console.WriteLine("mouseHook Event");
             return CallNextHookEx(mouseHookHandle.Value, nCode, wParam, lParam);
         }
 
         private void RecordButton_Click(object sender, RoutedEventArgs e)
         {
             // Start recording
-            recordedActions.Clear();
-            recordedMouseActions.Clear();
-            allActions.Clear();
+            actionReplayer.allActions.Clear();
 
             Hook(true, true);
 
@@ -177,9 +155,6 @@ namespace Mouse_Ghst_wpf
             recordMouseTimer.Interval = TimeSpan.FromMilliseconds(MOVE_TIMER); // Capture mouse position every X milliseconds
             recordMouseTimer.Tick += RecordMouseTimer_Tick;
             recordMouseTimer.Start();
-
-            // Subscribe to the PreviewKeyDown event to record keyboard input
-            //PreviewKeyDown += RecordKeyDown;
 
             //UI
             RecordButton.IsEnabled = false;
@@ -203,27 +178,16 @@ namespace Mouse_Ghst_wpf
             recordMouseTimer.Tick -= RecordMouseTimer_Tick;
             shouldRecordMouse = false;
 
-            // TODO : Erase last click that wasn't to stop the recording
-
-            foreach (var action in allActions)
-            {
-                var keyAction = action as InputAction;
-                var mouseAction = action as MouseAction;
-
-                if (mouseAction != null)
-                {
-                    string mouseActionString = (int)mouseAction.UnknownMouseType == 0 ? mouseAction.MouseType.ToString() : mouseAction.UnknownMouseType.ToString();
-                    Console.WriteLine($"Mouse Action: {mouseActionString}, X: {mouseAction.X}, Y: {mouseAction.Y}, Time: {mouseAction.Time}");
-                }
-                else if (keyAction != null)
-                    Console.WriteLine($"Key: {keyAction.KeyCode}, Time: {keyAction.Time}");
-                else
-                    Console.WriteLine("Unspecified Action Type.");
-            }
+            // TODO : Make a recording editor that shows the inputs and edits them
 
             //UI
             RecordButton.IsEnabled = true;
             StopButton.IsEnabled = false;
+
+            actionReplayer.LogActionsSummary();
+            actionReplayer.RemoveStartStopClic();
+            Console.WriteLine("After Cleanup");
+            actionReplayer.LogActionsSummary();
 
             GC.Collect();
 
@@ -231,114 +195,19 @@ namespace Mouse_Ghst_wpf
         }
 
         private async Task ReplayActionsAsync()
-        {
-            uint MOUSEEVENTF_ABSOLUTE = 0x8000;
-            uint MOUSEEVENTF_LEFTDOWN = 0x0002;
-            uint MOUSEEVENTF_LEFTUP = 0x0004;
-            uint MOUSEEVENTF_MOVE = 0x0001;
-            uint mouseEventFlag = 0;
-            _interruptReplay = false;
-
-            var actionsCopy = allActions.ToArray();
-            var firstAction = actionsCopy.First();
+        {           
+            actionReplayer._interruptReplay = false;
 
             GC.Collect();
 
             try
             {
-                Hook();
+                Hook(true, false);
+                
+                actionReplayer.isReplaying = true;
+                actionReplayer._interruptReplay = true;
+                await actionReplayer.ReplayActionsAsync(ReplayAmount);
 
-                BaseAction lastAction = null;
-                for (int i = 0; i < 1; i++)
-                {
-                    var replayStart = DateTime.Now;
-
-                    foreach (var action in actionsCopy)
-                    {
-                        if (!isReplaying || _interruptReplay)
-                        {
-                            break; // Stop replaying if the user clicked the "Stop" or "Esc" button
-                        }
-
-                        var actualDelay = (action.Time - firstAction.Time) - (DateTime.Now - replayStart);
-                        if (actualDelay > TimeSpan.Zero)
-                        {
-                            Thread.Sleep(actualDelay);
-                        }
-                        lastAction = action;
-
-                        if (action.Type == ActionType.Mouse)
-                        {
-                            // Replay mouse actions
-                            var mouseAction = (MouseAction)action;
-                            if (mouseAction.MouseType == MouseActionType.Down || mouseAction.MouseType == MouseActionType.Down2)
-                            {
-                                _isDragging = true;
-                            }
-                            else if (mouseAction.MouseType == MouseActionType.Up || mouseAction.MouseType == MouseActionType.Up2)
-                            {
-                                _isDragging = false;
-                            }
-
-                            switch (mouseAction.MouseType)
-                            {
-                                case MouseActionType.Move:
-                                    mouseEventFlag = MOUSEEVENTF_MOVE;
-                                    break;
-                                case MouseActionType.Down:
-                                case MouseActionType.Down2:
-                                    mouseEventFlag = MOUSEEVENTF_LEFTDOWN;
-                                    break;
-                                case MouseActionType.Up:
-                                case MouseActionType.Up2:
-                                    mouseEventFlag = MOUSEEVENTF_LEFTUP;
-                                    break;
-                                    // Add other cases as necessary
-                            }
-                            try
-                            {
-                                if (true || mouseAction.MouseType != MouseActionType.Move)
-                                {
-                                    // Use mouse_event function to simulate the action
-                                    mouse_event(mouseEventFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | (_isDragging ? MOUSEEVENTF_LEFTDOWN : 0),
-                                                (uint)(mouseAction.X * 65536 / SystemParameters.PrimaryScreenWidth),
-                                                (uint)(mouseAction.Y * 65536 / SystemParameters.PrimaryScreenHeight),
-                                                0, 0);
-                                }
-
-                                //Console.WriteLine($"Mouse moved : {mouseAction.MouseType.ToString()}-{(uint)mouseAction.UnknownMouseType}, ({mouseAction.X}, {mouseAction.Y}), delay: {delay.TotalMilliseconds / 1000} vs {actualDelay.TotalMilliseconds / 1000}");
-
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine("Mouse Move exception : " + ex.ToString());
-                            }
-                        }
-                        else if (action.Type == ActionType.Keyboard)
-                        {
-                            // Replay keyboard actions
-                            var keyboardAction = (InputAction)action;
-                            Input[] inputs = new Input[1];
-                            inputs[0] = new Input();
-                            inputs[0].type = INPUT_KEYBOARD;
-                            inputs[0].u.ki.wVk = (ushort)keyboardAction.KeyCode;
-                            inputs[0].u.ki.dwFlags = (uint)((keyboardAction.KeyDown) ? 0 : 2); // 0 for keydown, 2 for key
-
-                            //await Task.Delay(10);
-                            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
-                            //await Task.Delay(10);
-                            Console.WriteLine("Key Pressed");
-                        }
-
-                        //currentIndex++;
-                    }
-                }
-
-                // Finished replaying all actions
-                isReplaying = false;
-
-                // Enable the "Replay" button when replaying is stopped
-                ReplayButton.IsEnabled = true;
                 Unhook();
             }
             catch (Exception ex)
@@ -346,12 +215,22 @@ namespace Mouse_Ghst_wpf
                 Console.WriteLine("General Replay Error");
                 Console.WriteLine(ex.Message);
             }
+            finally
+            {
+                Unhook();
+
+                //UI
+                actionReplayer.isReplaying = false;
+
+                RecordButton.IsEnabled = true;
+                StopButton.IsEnabled = false;
+                ReplayButton.IsEnabled = true;
+            }
         }
 
         private void ReplayButton_Click(object sender, RoutedEventArgs e)
         {
-            isReplaying = true;
-            ReplayActionsAsync();
+            Task.Run(ReplayActionsAsync);
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
@@ -365,7 +244,7 @@ namespace Mouse_Ghst_wpf
             if (!keyboardHookHandle.HasValue && keyboard)
             {
                 Console.WriteLine("Hook Keyboard");
-                keyboardHookHandle = SetHook();
+                keyboardHookHandle = SetKeyboardHook();
             }
             if (!mouseHookHandle.HasValue && mouse)
             {
@@ -390,6 +269,58 @@ namespace Mouse_Ghst_wpf
             }
         }
 
+        private int _rep = 0;
+        private int ReplayAmount
+        {
+            get
+            {                
+                return _rep;
+            }
+            set
+            {
+                _rep = (value <=0 ? Int32.MaxValue : value);
+            }
+        }
+
+        private void Replayamount_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            try
+            {
+                ReplayAmount = Int32.Parse(ReplayAmountTextBox.Text);
+            }
+            catch { }
+            //debounce too, to be sure
+            Task.Run(() =>
+            {
+                Thread.Sleep(5);
+
+                try
+                {
+                    ReplayAmount = Int32.Parse(ReplayAmountTextBox.Text);
+                }
+                catch { }
+            });
+        }
+
+        private void PreviewTextInputHandler(Object sender, TextCompositionEventArgs e)
+        {
+            e.Handled = !IsTextAllowed(e.Text);
+        }
+        // Use the DataObject.Pasting Handler 
+        private void TextBoxPasting(object sender, DataObjectPastingEventArgs e)
+        {
+            if (!e.DataObject.GetDataPresent(typeof(String)) 
+                || !IsTextAllowed(e.DataObject.GetData(typeof(String)) as string))
+            {
+                e.CancelCommand();
+            }
+        }
+
+        private static readonly Regex _regex = new Regex("[^0-9.-]+"); //regex that matches disallowed text
+        private static bool IsTextAllowed(string text)
+        {
+            return !String.IsNullOrEmpty(text) && !_regex.IsMatch(text);
+        }
     }
 
 }
