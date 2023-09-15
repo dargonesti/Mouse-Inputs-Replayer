@@ -23,7 +23,7 @@ namespace Mouse_Ghst_wpf.Classes
 
         public MouseAction(IntPtr wParam, int x, int y, TimeSpan time)
         {
-
+            UnknownMouseType = wParam;
             if (Enum.IsDefined(typeof(MouseActionType), (int)wParam))
             {
                 MouseType = (MouseActionType)(int)wParam;
@@ -31,7 +31,7 @@ namespace Mouse_Ghst_wpf.Classes
             else
             {
                 // Unknown MouseActionType
-                UnknownMouseType = wParam;
+                MouseType = MouseActionType.Unknown;
             }
 
             X = x;

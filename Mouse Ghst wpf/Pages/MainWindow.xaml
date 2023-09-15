@@ -5,8 +5,30 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Mouse_Ghst_wpf"
         mc:Ignorable="d"
-        Title="MainWindow" Height="91" Width="335" Topmost="True">
+          Background="#333"
+        Title="Input Replayer" Height="91" Width="335" Topmost="True">
+    <!-- Add drop shadow effect to the window -->
+    <Window.Effect>
+        <DropShadowEffect Color="Black" Direction="270" ShadowDepth="2" Opacity="0.5"/>
+    </Window.Effect>
     <Grid>
+        <!-- Button styles -->
+        <Grid.Resources>
+            <Style TargetType="Button">
+                <Setter Property="Background" Value="#555"/>
+                <Setter Property="Foreground" Value="White"/>
+                <Setter Property="Padding" Value="10,5"/>
+                <Setter Property="Margin" Value="10"/>
+                <Setter Property="BorderBrush" Value="#777"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Style.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True">
+                        <Setter Property="Background" Value="#666"/>
+                        <Setter Property="BorderBrush" Value="#888"/>
+                    </Trigger>
+                </Style.Triggers>
+            </Style>
+        </Grid.Resources>
         <Button Name="RecordButton" Content="Record" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="10,10,0,0" Width="75" Click="RecordButton_Click"/>
         <Button Name="StopButton" IsEnabled="False" Content="Stop" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,10,0,0" Width="75" Click="StopButton_Click"/>
         <Button Name="ReplayButton" Content="Replay" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="10,10,10,10" Width="75" Click="ReplayButton_Click"/>

@@ -62,6 +62,7 @@
     <Compile Include="Struct\InputUnion.cs" />
     <Compile Include="Struct\KEYBDINPUT.cs" />
     <Compile Include="Struct\MOUSEINPUT.cs" />
+    <Compile Include="Test\Structs.cs" />
     <Page Include="Pages\MainWindow.xaml">
       <Generator>MSBuild:Compile</Generator>
       <SubType>Designer</SubType>

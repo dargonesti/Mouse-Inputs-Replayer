@@ -23,6 +23,8 @@ using System.Windows.Threading;
 using Point = System.Windows.Point;
 using System.Drawing;
 using Mouse_Ghst_wpf.Struct;
+using System.Reflection.Emit;
+using System.Threading;
 
 namespace Mouse_Ghst_wpf
 {
@@ -31,20 +33,24 @@ namespace Mouse_Ghst_wpf
     /// </summary>
     public partial class MainWindow : Window
     {
+        private const int MOVE_TIMER = 1;
+        private bool _isDragging = false;
+
         private const int INPUT_MOUSE = 0;
         private const int INPUT_KEYBOARD = 1;
         private const int INPUT_BUTTON = 2;
 
         private bool isReplaying = false;
         private bool shouldRecordMouse = false;
+        private bool _interruptReplay = false;
 
         private List<BaseAction> allActions = new List<BaseAction>();
         private List<InputAction> recordedActions = new List<InputAction>();
         private List<MouseAction> recordedMouseActions = new List<MouseAction>();
 
         private DateTime startTime;
-        private IntPtr keyboardHookHandle;
-        private IntPtr mouseHookHandle;
+        private IntPtr? keyboardHookHandle;
+        private IntPtr? mouseHookHandle;
 
         private DispatcherTimer recordMouseTimer;
 
@@ -86,6 +92,9 @@ namespace Mouse_Ghst_wpf
         [DllImport("user32.dll")]
         private static extern void mouse_event(int dwFlags, int dx, int dy, int dwData, int dwExtraInfo);
 
+        [DllImport("user32.dll")]
+        public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint cButtons, uint dwExtraInfo);
+
 
         [DllImport("User32.dll")]
         private static extern bool SetCursorPos(int X, int Y);
@@ -102,12 +111,11 @@ namespace Mouse_Ghst_wpf
         {
             InitializeComponent();
             startTime = DateTime.Now;
-            keyboardHookHandle = SetHook();
-            mouseHookHandle = SetMouseHook();
         }
 
         private IntPtr SetHook()
         {
+            Console.WriteLine("Set KB Hook");
             keyboardProc = KeyboardHookCallback;
             using (var curProcess = Process.GetCurrentProcess())
             using (var curModule = curProcess.MainModule)
@@ -118,20 +126,31 @@ namespace Mouse_Ghst_wpf
 
         private IntPtr SetMouseHook()
         {
+            Console.WriteLine("Set Mouse Hook");
             mouseProc = MouseHookCallback;
             return SetWindowsHookEx(WH_MOUSE_LL, mouseProc, IntPtr.Zero, 0);
         }
 
         private IntPtr KeyboardHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
         {
+            int vkCode = Marshal.ReadInt32(lParam);
+
             if (nCode >= 0 && (wParam == (IntPtr)WM_KEYDOWN || wParam == (IntPtr)WM_KEYUP))
             {
-                int vkCode = Marshal.ReadInt32(lParam);
                 InputAction action = new InputAction(ActionType.Keyboard, vkCode, (wParam == (IntPtr)WM_KEYDOWN), DateTime.Now - startTime);
                
                 allActions.Add(action);
+
+
             }
-            return CallNextHookEx(keyboardHookHandle, nCode, wParam, lParam);
+
+            if (vkCode == 27)
+            {
+                //Escape pressed, interrupt replay
+                _interruptReplay = true;
+            }
+            Console.WriteLine($"Key : {vkCode}");
+            return CallNextHookEx(keyboardHookHandle.Value, nCode, wParam, lParam);
         }
 
         private IntPtr MouseHookCallback(int nCode, IntPtr wParam, IntPtr lParam)
@@ -151,7 +170,8 @@ namespace Mouse_Ghst_wpf
                     shouldRecordMouse = false;
                 }
             }
-            return CallNextHookEx(mouseHookHandle, nCode, wParam, lParam);
+            Console.WriteLine("mouseHook Event");
+            return CallNextHookEx(mouseHookHandle.Value, nCode, wParam, lParam);
         }
 
         private void RecordButton_Click(object sender, RoutedEventArgs e)
@@ -161,16 +181,18 @@ namespace Mouse_Ghst_wpf
             recordedMouseActions.Clear();
             allActions.Clear();
 
+            Hook(true, true);
+
             startTime = DateTime.Now;
 
             // Initialize the recordMouseTimer
             recordMouseTimer = new DispatcherTimer();
-            recordMouseTimer.Interval = TimeSpan.FromMilliseconds(10); // Capture mouse position every X milliseconds
+            recordMouseTimer.Interval = TimeSpan.FromMilliseconds(MOVE_TIMER); // Capture mouse position every X milliseconds
             recordMouseTimer.Tick += RecordMouseTimer_Tick;
             recordMouseTimer.Start();
 
             // Subscribe to the PreviewKeyDown event to record keyboard input
-            PreviewKeyDown += RecordKeyDown;
+            //PreviewKeyDown += RecordKeyDown;
 
             //UI
             RecordButton.IsEnabled = false;
@@ -188,7 +210,8 @@ namespace Mouse_Ghst_wpf
         private void StopButton_Click(object sender, RoutedEventArgs e)
         {
             // Stop recording
-            PreviewKeyDown -= RecordKeyDown;
+            //PreviewKeyDown -= RecordKeyDown;
+            Unhook();
             recordMouseTimer.Stop();
             recordMouseTimer.Tick -= RecordMouseTimer_Tick;
             shouldRecordMouse = false;
@@ -215,75 +238,113 @@ namespace Mouse_Ghst_wpf
             RecordButton.IsEnabled = true;
             StopButton.IsEnabled = false;
 
+            GC.Collect();
+
             Console.WriteLine($"Stopped to Record");
         }
 
-        private async Task ReplayActionsAsync(int replaySpeedMilliseconds)
+        private async Task ReplayActionsAsync()
         {
+            uint MOUSEEVENTF_ABSOLUTE = 0x8000;
+            uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+            uint MOUSEEVENTF_LEFTUP = 0x0004;
+            uint MOUSEEVENTF_MOVE = 0x0001;
+            uint mouseEventFlag = 0;
+            _interruptReplay = false;
+
             var actionsCopy = allActions.ToArray();
+            var firstAction = actionsCopy.First();
+            
+            GC.Collect();
+
             try
             {
+                Hook();
+
                 BaseAction lastAction = null;
-                foreach (var action in actionsCopy)
+                for (int i = 0; i < 1; i++)
                 {
-                    if (!isReplaying)
+                    var replayStart = DateTime.Now;
+
+                    foreach (var action in actionsCopy)
                     {
-                        break; // Stop replaying if the user clicked the "Stop" button
-                    }
-
-                    var delay = lastAction is null ? TimeSpan.Zero : (action.Time - lastAction.Time);
-                    lastAction = action;
-
-                    await Task.Delay(delay);
-
-                    if (action.Type == ActionType.Mouse)
-                    {
-                        // Replay mouse actions
-                        var mouseAction = (MouseAction)action;
-                        Input[] inputs = new Input[1];
-                        inputs[0] = new Input();
-                        inputs[0].type = INPUT_MOUSE;
-                        inputs[0].u.mi.dx = (int)(mouseAction.X * 65536 / SystemParameters.PrimaryScreenWidth);
-                        inputs[0].u.mi.dy = (int)(mouseAction.Y * 65536 / SystemParameters.PrimaryScreenHeight);
-                        inputs[0].u.mi.dwFlags = (uint)mouseAction.MouseType;
-                        inputs[0].u.mi.mouseData = 0;
-                        //(mouseAction.MouseType == MouseActionType.MouseDown) ? MOUSEEVENTF_LEFTDOWN : MOUSEEVENTF_LEFTUP;
-
-                        try
+                        if (!isReplaying || _interruptReplay)
                         {
-                            SetCursorPos(mouseAction.X, mouseAction.Y);
+                            break; // Stop replaying if the user clicked the "Stop" button
+                        }
 
-                            if (true || mouseAction.MouseType != MouseActionType.Move)
+                        var actualDelay = (action.Time - firstAction.Time) - (DateTime.Now - replayStart);
+                        if (actualDelay > TimeSpan.Zero)
+                        {
+                            Thread.Sleep(actualDelay);
+                        }
+                        lastAction = action;
+
+                        if (action.Type == ActionType.Mouse)
+                        {
+                            // Replay mouse actions
+                            var mouseAction = (MouseAction)action;
+                            if (mouseAction.MouseType == MouseActionType.Down || mouseAction.MouseType == MouseActionType.Down2)
                             {
-                                // await Task.Delay(1);
-                                //mouse_event((int)mouseAction.MouseType, mouseAction.X, mouseAction.Y, 0, 0);
-                                SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
-                                //await Task.Delay(1);
+                                _isDragging = true;
                             }
-                            Console.WriteLine($"Mouse moved : {mouseAction.MouseType.ToString()}, ({mouseAction.X}, {mouseAction.Y}), delay: {delay.TotalMilliseconds/1000}");
+                            else if (mouseAction.MouseType == MouseActionType.Up || mouseAction.MouseType == MouseActionType.Up2)
+                            {
+                                _isDragging = false;
+                            }
+
+                            switch (mouseAction.MouseType)
+                            {
+                                case MouseActionType.Move:
+                                    mouseEventFlag = MOUSEEVENTF_MOVE;
+                                    break;
+                                case MouseActionType.Down:
+                                case MouseActionType.Down2:
+                                    mouseEventFlag = MOUSEEVENTF_LEFTDOWN;
+                                    break;
+                                case MouseActionType.Up:
+                                case MouseActionType.Up2:
+                                    mouseEventFlag = MOUSEEVENTF_LEFTUP;
+                                    break;
+                                    // Add other cases as necessary
+                            }
+                            try
+                            {
+                                if (true || mouseAction.MouseType != MouseActionType.Move)
+                                {
+                                    // Use mouse_event function to simulate the action
+                                    mouse_event(mouseEventFlag | MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | (_isDragging ? MOUSEEVENTF_LEFTDOWN : 0),
+                                                (uint)(mouseAction.X * 65536 / SystemParameters.PrimaryScreenWidth),
+                                                (uint)(mouseAction.Y * 65536 / SystemParameters.PrimaryScreenHeight),
+                                                0, 0);
+                                }
+
+                                //Console.WriteLine($"Mouse moved : {mouseAction.MouseType.ToString()}-{(uint)mouseAction.UnknownMouseType}, ({mouseAction.X}, {mouseAction.Y}), delay: {delay.TotalMilliseconds / 1000} vs {actualDelay.TotalMilliseconds / 1000}");
+
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine("Mouse Move exception : " + ex.ToString());
+                            }
                         }
-                        catch (Exception ex)
+                        else if (action.Type == ActionType.Keyboard)
                         {
-                            Console.WriteLine("Mouse Move exception : " + ex.ToString());
+                            // Replay keyboard actions
+                            var keyboardAction = (InputAction)action;
+                            Input[] inputs = new Input[1];
+                            inputs[0] = new Input();
+                            inputs[0].type = INPUT_KEYBOARD;
+                            inputs[0].u.ki.wVk = (ushort)keyboardAction.KeyCode;
+                            inputs[0].u.ki.dwFlags = (uint)((keyboardAction.KeyDown) ? 0 : 2); // 0 for keydown, 2 for key
+
+                            //await Task.Delay(10);
+                            SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
+                            //await Task.Delay(10);
+                            Console.WriteLine("Key Pressed");
                         }
-                    }
-                    else if (action.Type == ActionType.Keyboard)
-                    {
-                        // Replay keyboard actions
-                        var keyboardAction = (InputAction)action;
-                        Input[] inputs = new Input[1];
-                        inputs[0] = new Input();
-                        inputs[0].type = INPUT_KEYBOARD;
-                        inputs[0].u.ki.wVk = (ushort)keyboardAction.KeyCode;
-                        inputs[0].u.ki.dwFlags = (uint)((keyboardAction.KeyDown) ? 0 : 2); // 0 for keydown, 2 for key
 
-                        //await Task.Delay(10);
-                        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(Input)));
-                        //await Task.Delay(10);
-                        Console.WriteLine("Key Pressed");
+                        //currentIndex++;
                     }
-
-                    //currentIndex++;
                 }
 
                 // Finished replaying all actions
@@ -291,6 +352,7 @@ namespace Mouse_Ghst_wpf
 
                 // Enable the "Replay" button when replaying is stopped
                 ReplayButton.IsEnabled = true;
+                Unhook();
             }
             catch (Exception ex)
             {
@@ -298,80 +360,47 @@ namespace Mouse_Ghst_wpf
                 Console.WriteLine(ex.Message);
             }
         }
-        private async Task ReplayActionsAsync2(int replaySpeedMilliseconds)
-        {
-            foreach (var action in allActions)
-            {
-                if (!isReplaying)
-                {
-                    break; // Stop replaying if the user clicked the "Stop" button
-                }
-
-                await Task.Delay(replaySpeedMilliseconds);
-
-                if (action.Type == ActionType.Mouse)
-                {
-                    // Replay mouse actions
-                    var mouseAction = (MouseAction)action;
-                    if (mouseAction.MouseType == MouseActionType.Down)
-                    {
-                        //SendInput(MOUSEEVENTF_LEFTDOWN, (uint)mouseAction.X, (uint)mouseAction.Y, 0, 0);
-                    }
-                    else if (mouseAction.MouseType == MouseActionType.Up)
-                    {
-                        //SendInput(MOUSEEVENTF_LEFTUP, (uint)mouseAction.X, (uint)mouseAction.Y, 0, 0);
-                    }
-                    else if (mouseAction.MouseType == MouseActionType.MiddleDown || mouseAction.MouseType == MouseActionType.MiddleUp)
-                    {
-                        Console.WriteLine("TODO : Whele replay");
-                        //SendInput(MOUSEEVENTF_WHEEL, 0, 0, (uint)mouseAction.WheelDelta, 0);
-                    }
-                }
-                else if (action.Type == ActionType.Keyboard)
-                {
-                    // Replay keyboard actions
-                    var keyboardAction = (InputAction)action;
-                    if (keyboardAction.KeyDown)
-                    {
-                        KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(keyboardAction.KeyCode));
-                        keyEventArgs.RoutedEvent = KeyDownEvent;
-                        InputManager.Current.ProcessInput(keyEventArgs);
-                    }
-                    else
-                    {
-                        KeyEventArgs keyEventArgs = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(this), 0, KeyInterop.KeyFromVirtualKey(keyboardAction.KeyCode));
-                        keyEventArgs.RoutedEvent = KeyUpEvent;
-                        InputManager.Current.ProcessInput(keyEventArgs);
-                    }
-                }
-
-                //currentIndex++;
-            }
-
-            // Finished replaying all actions
-            isReplaying = false;
-
-            // Enable the "Replay" button when replaying is stopped
-            ReplayButton.IsEnabled = true;
-        }
 
         private void ReplayButton_Click(object sender, RoutedEventArgs e)
         {
             isReplaying = true;
-            ReplayActionsAsync(333);
-        }
-
-        private void RecordKeyDown(object sender, KeyEventArgs e)
-        {
-            // Record key presses
-            KeyboardAction action = new KeyboardAction(e.Key, DateTime.Now - startTime);
-            //recordedActions.Add(action);
+            ReplayActionsAsync();
         }
 
         protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
         {
             base.OnClosing(e);
-            UnhookWindowsHookEx(keyboardHookHandle);
+            Unhook(true);
+        }
+
+        private void Hook(bool keyboard = true, bool mouse = true)
+        {
+            if (!keyboardHookHandle.HasValue && keyboard)
+            {
+                Console.WriteLine("Hook Keyboard");
+                keyboardHookHandle = SetHook();
+            }
+            if (!mouseHookHandle.HasValue && mouse)
+            {
+                Console.WriteLine("Hook Mouse");
+                mouseHookHandle = SetMouseHook();
+            }
+        }
+
+        private void Unhook(bool keyboard = false, bool mouse = true)
+        {
+            if(keyboardHookHandle != null && keyboard)
+            {
+                Console.WriteLine("Unhook Keyboard");
+                UnhookWindowsHookEx(keyboardHookHandle.Value);
+                keyboardHookHandle = null;
+            }
+            if(mouseHookHandle != null && mouse)
+            {
+                Console.WriteLine("Unhook Mouse");
+                UnhookWindowsHookEx(mouseHookHandle.Value);
+                mouseHookHandle = null;
+            }
         }
 
     }
