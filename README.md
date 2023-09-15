@@ -1,5 +1,6 @@
 # Mouse Inputs Replayer
 Records and replays user inputs automatically. (X times)
+
 ![image](https://github.com/dargonesti/Mouse-Inputs-Replayer/assets/3078914/32c5c946-c6e6-44bd-98be-f13bb3674683)
 
 TODO : 
